@@ -2,6 +2,7 @@ package hosttune
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func TestConfiguredDiskWarnings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e, f := fixture()
 			e.Disk = tc.thresholds
-			f.commands["df -Pk -- /work"] = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 104857600 83886080 20971520 80% /work"
+			f.commands[strings.Join([]string{"df", "-Pk", "--", "/work"}, " ")] = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 104857600 83886080 20971520 80% /work"
 			got := diskCheck(false)(context.Background(), e)
 			if got.Status != tc.want {
 				t.Fatalf("%+v", got)

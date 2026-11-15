@@ -435,6 +435,9 @@ settings page reports rather than refusing the edit.
 | `agent.registry_auth` | `ZOOMIES_REGISTRY_AUTH` | next restart | Registry credentials: A base64 X-Registry-Auth value the container backends send when they pull. Without it a pool on a private registry cannot use pinned-only pulls at all. |
 | `agent.runner_download_url` | `ZOOMIES_AGENT_RUNNER_DOWNLOAD_URL` | next restart | Runner download mirror: Where the process backend fetches runner archives from, for hosts that mirror releases internally. The path below it is the same. |
 | `agent.runner_sha256` | `ZOOMIES_AGENT_RUNNER_SHA256` | next restart | Runner archive digest: The expected digest of the actions/runner archive the process backend downloads. Zoomies ships the digest for the release it pins; supply one when you pin another. |
+| `agent.disk.warn_free_percent` | `ZOOMIES_AGENT_DISK_WARN_FREE_PERCENT` | next restart | Warn below this percentage of free disk space; default 10. |
+| `agent.disk.warn_free_gib` | `ZOOMIES_AGENT_DISK_WARN_FREE_GIB` | next restart | Warn below this many GiB of free disk space; default 10. |
+| `agent.disk.stop_free_gib` | `ZOOMIES_AGENT_DISK_STOP_FREE_GIB` | next restart | Pause new runners below this reserve in GiB; 0 disables the pause. Running jobs finish. |
 | `agent.work_dir` | `ZOOMIES_WORK_DIR` | next restart | Working directory: Where runner working directories and the agent's own credentials live. |
 
 ### `assistant`

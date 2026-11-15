@@ -842,7 +842,15 @@ func (c *Config) validateAgent(add func(Finding)) {
 				Fix:   `use "docker", "podman" or "process".`,
 			})
 		}
-		for setting, value := range map[string]float64{"warn_free_percent": c.Agent.Disk.WarnFreePercent, "warn_free_gib": c.Agent.Disk.WarnFreeGiB, "stop_free_gib": c.Agent.Disk.StopFreeGiB} {
+		for _, threshold := range []struct {
+			setting string
+			value   float64
+		}{
+			{"warn_free_percent", c.Agent.Disk.WarnFreePercent},
+			{"warn_free_gib", c.Agent.Disk.WarnFreeGiB},
+			{"stop_free_gib", c.Agent.Disk.StopFreeGiB},
+		} {
+			setting, value := threshold.setting, threshold.value
 			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || (setting == "warn_free_percent" && value > 100) {
 				add(Finding{Code: "agent.disk", Severity: SeverityError, Setting: "agent.disk." + setting, Title: "invalid disk threshold", Fix: "Use a finite nonnegative threshold; percentages cannot exceed 100."})
 			}
