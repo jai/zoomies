@@ -66,3 +66,7 @@ Cooperating local schedulers must take an exclusive `flock` on
 `<slot-directory>/.admission.lock` around counting and reserving slots. This
 keeps concurrent admissions within a reduced limit while higher slots drain.
 The admission-file option is supported on Unix hosts only.
+
+If the listener was already gone before shutdown began, its saved identity
+cannot be verified. Cleanup retains that reservation while its group survives;
+an operator must inspect and end that orphan group.

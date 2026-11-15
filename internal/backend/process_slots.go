@@ -83,12 +83,12 @@ func (b *ProcessBackend) reserveSlot(dir string, spec *Spec) (*processLease, err
 			return nil, err
 		}
 		if err := lease.bind(os.Getpid()); err != nil {
-			lease.release()
+			lease.releaseLocked()
 			return nil, err
 		}
 		data, _ := json.Marshal(lease)
 		if err := os.WriteFile(filepath.Join(dir, ".zoomies-slot"), data, 0600); err != nil {
-			lease.release()
+			lease.releaseLocked()
 			return nil, err
 		}
 		env := make(map[string]string, len(spec.Env)+len(policy.Env)+1)
@@ -100,7 +100,7 @@ func (b *ProcessBackend) reserveSlot(dir string, spec *Spec) (*processLease, err
 		}
 		env["CI_SLOT"] = strconv.Itoa(slot)
 		if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0700); err != nil {
-			lease.release()
+			lease.releaseLocked()
 			return nil, err
 		}
 		spec.Env = env
@@ -116,6 +116,19 @@ func (l *processLease) bind(pid int) error {
 	return os.WriteFile(filepath.Join(l.Path, "owner"), []byte(strconv.Itoa(pid)), 0600)
 }
 func (l *processLease) release() {
+	if l == nil {
+		return
+	}
+	unlock, err := lockProcessSlots(filepath.Dir(l.Path))
+	if err != nil {
+		return
+	}
+	defer unlock()
+	l.releaseLocked()
+}
+
+// Reservation error paths already hold the admission lock.
+func (l *processLease) releaseLocked() {
 	if l == nil {
 		return
 	}
