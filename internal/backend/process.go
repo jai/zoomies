@@ -757,7 +757,12 @@ func (b *ProcessBackend) Remove(ctx context.Context, h Handle) error {
 }
 
 func (b *ProcessBackend) wipe(ctx context.Context, dir string) error {
+	lease := b.processLease(dir)
+	if readPID(dir) <= 0 && lease.ownerAlive() {
+		return fmt.Errorf("backend: runner metadata is gone but its slot owner remains; retaining slot")
+	}
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		lease.release()
 		return nil
 	}
 	if pid := readPID(dir); pid > 0 && (processAlive(pid) || (b.termOnly && runnerGroupAlive(pid))) {
@@ -788,7 +793,6 @@ func (b *ProcessBackend) wipe(ctx context.Context, dir string) error {
 			"dir", dir, "waited", reapGrace)
 	}
 
-	lease := readProcessLease(dir)
 	if err := removeAllRetry(ctx, dir, removeGrace, os.RemoveAll); err != nil {
 		return fmt.Errorf("backend: removing the runner directory %s: %w", dir, err)
 	}

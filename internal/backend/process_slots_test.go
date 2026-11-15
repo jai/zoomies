@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/eyupio/zoomies/internal/store"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -139,5 +140,49 @@ func TestLowerNativeCapacityWaitsForHigherNumberedSlots(t *testing.T) {
 	spec := processSpec()
 	if _, err := b.reserveSlot(dir, &spec); Fault(err) != store.FaultBackendBusy {
 		t.Fatalf("higher slot did not block admission: %v", err)
+	}
+}
+
+func TestNativeRemovalRecoversSlotAfterPartialDirectoryDeletion(t *testing.T) {
+	for _, directoryGone := range []bool{false, true} {
+		t.Run(strconv.FormatBool(directoryGone), func(t *testing.T) {
+			b, root := newStubProcessBackend(t)
+			b.admissionFile = filepath.Join(root, "policy")
+			dir := filepath.Join(root, "job")
+			os.Mkdir(dir, 0700)
+			policy := ProcessAdmission{Directory: filepath.Join(root, "slots"), Capacity: 1}
+			data, _ := json.Marshal(policy)
+			os.WriteFile(b.admissionFile, data, 0600)
+			spec := processSpec()
+			lease, err := b.reserveSlot(dir, &spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Metadata disappeared while the owner was still alive: never free it.
+			os.Remove(filepath.Join(dir, ".zoomies-slot"))
+			if directoryGone {
+				os.RemoveAll(dir)
+			}
+			if err := b.Remove(context.Background(), Handle(dir)); err == nil {
+				t.Fatal("removed a live owner's slot")
+			}
+			if _, err := os.Stat(lease.Path); err != nil {
+				t.Fatal(err)
+			}
+			// Use the PID of a child that has exited and been reaped.
+			cmd := exec.Command("/bin/sh", "-c", "exit 0")
+			if err := cmd.Run(); err != nil {
+				t.Fatal(err)
+			}
+			if err := lease.bind(cmd.Process.Pid); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.Remove(context.Background(), Handle(dir)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(lease.Path); !os.IsNotExist(err) {
+				t.Fatalf("stale slot remains: %v", err)
+			}
+		})
 	}
 }
