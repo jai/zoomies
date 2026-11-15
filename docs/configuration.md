@@ -2902,3 +2902,21 @@ and open a draft pull request. This needs Contents write and Pull requests write
 without Workflows write. The preview shows current and proposed contents and
 rejects changes made after review. Merge the proposal, then press **Recheck**.
 See [Agent guidance](kennel-club.md#agent-guidance) for the repair limits.
+
+### Agent disk reserve
+
+```yaml
+agent:
+  disk:
+    warn_free_percent: 10
+    warn_free_gib: 10
+    stop_free_gib: 0
+```
+
+Warnings keep the previous defaults. The optional admission reserve is measured
+on the filesystem holding `agent.work_dir`, before accepting a runner and again
+after waiting for a startup slot. Below it, creates are refused; running jobs and
+cleanup continue. Admission resumes at or above the threshold. A failed disk
+measurement pauses admission when a reserve is enabled. Zero disables it.
+Doctor's disk warnings remain Linux-only; admission works on macOS, Linux and
+Windows. GiB means 1,073,741,824 bytes. Changes require an agent restart.
