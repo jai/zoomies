@@ -650,8 +650,7 @@ func (b *ProcessBackend) Logs(ctx context.Context, h Handle, opts LogOptions) (i
 	}, nil
 }
 
-// Stop sends SIGINT, which the runner treats as "finish this job and exit",
-// then escalates.
+// Stop sends TERM on macOS and INT elsewhere, then escalates after the timeout.
 func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Duration) error {
 	dir := string(h)
 	pid := readPID(dir)
@@ -692,7 +691,11 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 	}
 	// The whole group, not the listener alone: the job runs in a worker the
 	// listener spawned, and it is the worker that has to be told to stop.
-	if err := signalRunner(proc, syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	signal := syscall.SIGINT
+	if runtime.GOOS == "darwin" {
+		signal = syscall.SIGTERM
+	}
+	if err := signalRunner(proc, signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		b.log.Warn("could not interrupt the runner; killing it", "dir", dir, "pid", pid, "error", err)
 		return b.kill(ctx, proc, dir)
 	}
@@ -700,7 +703,7 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 		return nil
 	}
 
-	b.log.Warn("runner did not exit after SIGINT; killing it", "dir", dir, "pid", pid, "timeout", timeout)
+	b.log.Warn("runner did not exit after graceful stop; killing it", "dir", dir, "pid", pid, "timeout", timeout)
 	return b.kill(ctx, proc, dir)
 }
 

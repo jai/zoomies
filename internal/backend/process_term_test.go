@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -86,4 +87,22 @@ func TestTermOnlyKeepsTheSlotUntilTheWorkersExit(t *testing.T) {
 	if _, err := os.Stat(string(h)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestMacDefaultStopsWithTERM(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS stop signal")
+	}
+	b, root := newStubProcessBackend(t)
+	installStubRunner(t, root, stubVersion, "#!/bin/sh\ntrap 'echo terminated; exit 0' TERM\ntrap '' INT\necho ready\nwhile :; do sleep 0.1; done\n", stubConfigOK)
+	h, err := b.Create(context.Background(), processSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Remove(context.Background(), h)
+	waitForLog(t, string(h), "ready", 5*time.Second)
+	if err := b.Stop(context.Background(), h, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	waitForLog(t, string(h), "terminated", time.Second)
 }
