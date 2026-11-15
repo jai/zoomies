@@ -130,3 +130,50 @@ func readProcessLease(dir string) *processLease {
 	}
 	return &l
 }
+
+// A failed RemoveAll may already have deleted .zoomies-slot. The slot's own
+// runner record survives that operation and lets a later removal retry release it.
+func (b *ProcessBackend) processLease(dir string) *processLease {
+	if lease := readProcessLease(dir); lease != nil {
+		return lease
+	}
+	data, err := os.ReadFile(b.admissionFile)
+	if err != nil {
+		return nil
+	}
+	var policy ProcessAdmission
+	if json.Unmarshal(data, &policy) != nil || !filepath.IsAbs(policy.Directory) {
+		return nil
+	}
+	entries, err := os.ReadDir(policy.Directory)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		slot, err := strconv.Atoi(entry.Name())
+		if err != nil || !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(policy.Directory, entry.Name())
+		runner, err := os.ReadFile(filepath.Join(path, "runner"))
+		if err == nil && string(runner) == dir {
+			return &processLease{Path: path, Runner: dir, Slot: slot}
+		}
+	}
+	return nil
+}
+
+func (l *processLease) ownerAlive() bool {
+	if l == nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(l.Path, "owner"))
+	if err != nil {
+		return true
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return true
+	}
+	return processAlive(pid) || runnerGroupAlive(pid)
+}

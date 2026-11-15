@@ -23,6 +23,8 @@ Example policy (write atomically and refresh before expires_at):
   "expires_at": 1794746400,
   "env": {
     "HOME": "/Users/jai",
+    "USER": "jai",
+    "LOGNAME": "jai",
     "GATE_SLOT": "zoomies-c03-{slot}",
     "TMPDIR": "{job}/tmp",
     "CI_NINJA_JOBS": "4",
@@ -33,8 +35,8 @@ Example policy (write atomically and refresh before expires_at):
 
 `CI_SLOT` is always the reserved number. The environment map is an explicit
 operator allowlist; the agent's credentials are never inherited. The policy
-supervisor belongs to jai/ci, which owns disk thresholds and interactive-use
-limits. A missing, expired or invalid policy fails closed. Capacity zero pauses
+supervisor belongs to jai/ci, which owns the fixed slot limits. No input-idle
+sampling is used. Disk admission thresholds are a separate change. A missing, expired or invalid policy fails closed. Capacity zero pauses
 admission while existing runners finish. Other owners' reservations are never
 reclaimed by this implementation. After a crash, inspect stale reservations
 before removing them; prefer a stranded slot to over-admitting work.
@@ -57,3 +59,9 @@ Not yet an upstream submission. Known follow-ups before proposing a public API:
 separate the compatibility owner-file contract from the generic slot interface,
 validate policy input as configuration, and prove crash recovery and process-tree
 shutdown (including descendants that leave the listener's process group).
+
+The live trial uses `process_term_only: false`: Darwin sends TERM first, then
+escalates only if the runner does not stop. The opt-in TERM-only mode remains
+available. A real cleanup retry exposed a deleted `.zoomies-slot` record;
+removal now recovers the lease from the matching slot record and refuses to
+release it while its owner or process group remains alive.
