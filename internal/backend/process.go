@@ -83,6 +83,9 @@ const tailPoll = 250 * time.Millisecond
 type ProcessOptions struct {
 	// WorkDir is the root of the layout above. It must be writable.
 	WorkDir string
+	// TermOnly preserves build processes that need graceful shutdown.
+	TermOnly      bool
+	AdmissionFile string
 	// RunnerVersion is the actions/runner release used when a pool does not pin
 	// one. Empty means DefaultRunnerVersion.
 	RunnerVersion string
@@ -105,6 +108,8 @@ type ProcessOptions struct {
 // ProcessBackend runs runners as ordinary processes on the host.
 type ProcessBackend struct {
 	root            string
+	termOnly        bool
+	admissionFile   string
 	version         string
 	sha256          string
 	allowUnverified bool
@@ -157,6 +162,8 @@ func NewProcess(opts ProcessOptions) (*ProcessBackend, error) {
 
 	return &ProcessBackend{
 		root:            abs,
+		termOnly:        opts.TermOnly,
+		admissionFile:   opts.AdmissionFile,
 		version:         version,
 		sha256:          strings.ToLower(strings.TrimSpace(opts.RunnerSHA256)),
 		allowUnverified: opts.AllowUnverifiedDownload,
@@ -278,6 +285,17 @@ func (b *ProcessBackend) CreateWithResult(ctx context.Context, spec Spec) (Creat
 	if err := os.MkdirAll(filepath.Join(dir, runnerWorkDir), 0o750); err != nil {
 		return CreateResult{}, fmt.Errorf("backend: creating the runner directory %s: %w", dir, err)
 	}
+	lease, err := b.reserveSlot(dir, &spec)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return CreateResult{}, err
+	}
+	startedOK := false
+	defer func() {
+		if !startedOK {
+			lease.release()
+		}
+	}()
 	// Each runner needs its own copy of the tree, because the runner keeps its
 	// credentials and its state next to the binary. Files are hard-linked where
 	// the filesystem allows it, so the copy costs inodes rather than gigabytes.
@@ -306,6 +324,7 @@ func (b *ProcessBackend) CreateWithResult(ctx context.Context, spec Spec) (Creat
 		_ = os.RemoveAll(dir)
 		return CreateResult{}, err
 	}
+	startedOK = true
 	b.log.Info("runner process started", "runner", spec.Name, "pool", spec.PoolName, "dir", dir, "runner_version", version)
 	return CreateResult{Handle: Handle(dir), CreateDuration: time.Since(started)}, nil
 }
@@ -384,6 +403,10 @@ func (b *ProcessBackend) start(dir string, args, env []string, spec Spec, versio
 		return fmt.Errorf("backend: starting the runner in %s: %w", dir, err)
 	}
 	adoptRunner(cmd)
+	if err := readProcessLease(dir).bind(cmd.Process.Pid); err != nil {
+		b.abandon(cmd, logFile)
+		return err
+	}
 
 	now := time.Now().UTC()
 	meta := processMeta{
@@ -399,15 +422,15 @@ func (b *ProcessBackend) start(dir string, args, env []string, spec Spec, versio
 	}
 	meta.ProcessIdentity, err = processIdentity(meta.PID)
 	if err != nil {
-		abandon(cmd, logFile)
+		b.abandon(cmd, logFile)
 		return fmt.Errorf("recording native process identity: %w", err)
 	}
 	if err := writeMeta(dir, meta); err != nil {
-		abandon(cmd, logFile)
+		b.abandon(cmd, logFile)
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(dir, runnerPIDFile), []byte(strconv.Itoa(cmd.Process.Pid)), 0o640); err != nil {
-		abandon(cmd, logFile)
+		b.abandon(cmd, logFile)
 		return fmt.Errorf("backend: writing the pid file in %s: %w", dir, err)
 	}
 
@@ -453,8 +476,12 @@ const reapGrace = 5 * time.Second
 
 // abandon kills a child we have decided not to keep and reaps it, so that a
 // half-failed create leaves no zombie behind.
-func abandon(cmd *exec.Cmd, log *os.File) {
-	_ = cmd.Process.Kill()
+func (b *ProcessBackend) abandon(cmd *exec.Cmd, log *os.File) {
+	if b.termOnly {
+		_ = signalRunner(cmd.Process, syscall.SIGTERM)
+	} else {
+		_ = cmd.Process.Kill()
+	}
 	_ = cmd.Wait()
 	_ = log.Close()
 }
@@ -648,6 +675,9 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 	if err != nil {
 		return nil
 	}
+	if b.termOnly {
+		return terminateRunner(ctx, proc, timeout)
+	}
 	if runtime.GOOS == "windows" {
 		// There is no interrupt to send: a service has no console to raise
 		// Ctrl-C on, so a drain is a kill here. The runner's ephemeral
@@ -676,6 +706,9 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 const killGrace = 5 * time.Second
 
 func (b *ProcessBackend) kill(ctx context.Context, proc *os.Process, dir string) error {
+	if b.termOnly {
+		return fmt.Errorf("backend: forced termination is disabled for process runners")
+	}
 	if !processAlive(proc.Pid) {
 		return nil
 	}
@@ -746,9 +779,11 @@ func (b *ProcessBackend) wipe(ctx context.Context, dir string) error {
 			"dir", dir, "waited", reapGrace)
 	}
 
+	lease := readProcessLease(dir)
 	if err := removeAllRetry(ctx, dir, removeGrace, os.RemoveAll); err != nil {
 		return fmt.Errorf("backend: removing the runner directory %s: %w", dir, err)
 	}
+	lease.release()
 	return nil
 }
 
@@ -1528,6 +1563,17 @@ func verifyProcessIdentity(meta processMeta, pid int) error {
 	}
 	if identity != meta.ProcessIdentity {
 		return fmt.Errorf("%w: native runner %w; refusing to signal or adopt it", ErrUnavailable, errProcessReused)
+	}
+	return nil
+}
+
+// A timeout is not permission to delete a live build's directory or free its slot.
+func terminateRunner(ctx context.Context, proc *os.Process, timeout time.Duration) error {
+	if err := signalRunner(proc, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	if !waitFor(ctx, func() bool { return !processAlive(proc.Pid) }, timeout, 20*time.Millisecond) {
+		return fmt.Errorf("backend: runner %d has not exited after TERM; retaining its directory and slot", proc.Pid)
 	}
 	return nil
 }
