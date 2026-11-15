@@ -47,6 +47,21 @@ func (b *ProcessBackend) reserveSlot(dir string, spec *Spec) (*processLease, err
 	if err := os.MkdirAll(policy.Directory, 0700); err != nil {
 		return nil, err
 	}
+	entries, err := os.ReadDir(policy.Directory)
+	if err != nil {
+		return nil, err
+	}
+	occupied := 0
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err == nil && entry.IsDir() {
+			occupied++
+		}
+	}
+	// Lowering the limit must not admit a replacement while a higher-numbered
+	// slot is still running. Existing jobs drain without being interrupted.
+	if occupied >= policy.Capacity {
+		return nil, busyErr(fmt.Errorf("native capacity is occupied"))
+	}
 	for slot := 1; slot <= policy.Capacity; slot++ {
 		path := filepath.Join(policy.Directory, strconv.Itoa(slot))
 		if err := os.Mkdir(path, 0700); err != nil {

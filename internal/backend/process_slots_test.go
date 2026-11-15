@@ -126,3 +126,18 @@ func TestNativeAdmissionExportsItsOwnSlotAndRejectsExpiredPolicy(t *testing.T) {
 		t.Fatalf("expired policy: %v", err)
 	}
 }
+
+func TestLowerNativeCapacityWaitsForHigherNumberedSlots(t *testing.T) {
+	b, root := newStubProcessBackend(t)
+	b.admissionFile = filepath.Join(root, "policy")
+	dir := filepath.Join(root, "job")
+	os.Mkdir(dir, 0700)
+	policy := ProcessAdmission{Directory: filepath.Join(root, "slots"), Capacity: 1}
+	os.MkdirAll(filepath.Join(policy.Directory, "2"), 0700)
+	data, _ := json.Marshal(policy)
+	os.WriteFile(b.admissionFile, data, 0600)
+	spec := processSpec()
+	if _, err := b.reserveSlot(dir, &spec); Fault(err) != store.FaultBackendBusy {
+		t.Fatalf("higher slot did not block admission: %v", err)
+	}
+}
