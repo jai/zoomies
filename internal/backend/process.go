@@ -655,7 +655,13 @@ func (b *ProcessBackend) Logs(ctx context.Context, h Handle, opts LogOptions) (i
 func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Duration) error {
 	dir := string(h)
 	pid := readPID(dir)
-	if pid <= 0 || !processAlive(pid) {
+	if pid <= 0 {
+		return nil
+	}
+	if !processAlive(pid) {
+		if b.termOnly && runnerGroupAlive(pid) {
+			return fmt.Errorf("backend: runner leader exited but its process group remains; retaining directory and slot")
+		}
 		return nil
 	}
 	meta, err := readMeta(dir)
@@ -751,7 +757,7 @@ func (b *ProcessBackend) wipe(ctx context.Context, dir string) error {
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	if pid := readPID(dir); pid > 0 && processAlive(pid) {
+	if pid := readPID(dir); pid > 0 && (processAlive(pid) || (b.termOnly && runnerGroupAlive(pid))) {
 		if err := b.Stop(ctx, Handle(dir), 10*time.Second); err != nil {
 			return fmt.Errorf("refusing to remove a runner whose process could not be stopped: %w", err)
 		}
@@ -1572,7 +1578,7 @@ func terminateRunner(ctx context.Context, proc *os.Process, timeout time.Duratio
 	if err := signalRunner(proc, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	if !waitFor(ctx, func() bool { return !processAlive(proc.Pid) }, timeout, 20*time.Millisecond) {
+	if !waitFor(ctx, func() bool { return !runnerGroupAlive(proc.Pid) }, timeout, 20*time.Millisecond) {
 		return fmt.Errorf("backend: runner %d has not exited after TERM; retaining its directory and slot", proc.Pid)
 	}
 	return nil

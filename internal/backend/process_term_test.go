@@ -61,3 +61,29 @@ func TestTermOnlyTimeoutKeepsTheProcessAndJobDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTermOnlyKeepsTheSlotUntilTheWorkersExit(t *testing.T) {
+	b, root := newStubProcessBackend(t)
+	b.termOnly = true
+	installStubRunner(t, root, stubVersion, "#!/bin/sh\ntrap 'exit 0' TERM\nsh -c 'trap \"\" TERM INT; echo child-ready; while [ ! -f release ]; do sleep 0.1; done' &\nwait\n", stubConfigOK)
+	h, err := b.Create(context.Background(), processSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := readPID(string(h))
+	defer func() {
+		os.WriteFile(filepath.Join(string(h), "release"), nil, 0600)
+		waitFor(context.Background(), func() bool { return !runnerGroupAlive(pid) }, 5*time.Second, 20*time.Millisecond)
+		b.Remove(context.Background(), h)
+	}()
+	waitForLog(t, string(h), "child-ready", 5*time.Second)
+	if err := b.Stop(context.Background(), h, 100*time.Millisecond); err == nil {
+		t.Fatal("reported success while a worker survived")
+	}
+	if err := b.Remove(context.Background(), h); err == nil {
+		t.Fatal("deleted a job with a live worker")
+	}
+	if _, err := os.Stat(string(h)); err != nil {
+		t.Fatal(err)
+	}
+}

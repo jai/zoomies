@@ -193,3 +193,5 @@ func platformChildEnv(dir string) []string {
 	}
 	return env
 }
+
+func runnerGroupAlive(pid int) bool { return processAlive(pid) }

@@ -90,3 +90,12 @@ func processAlive(pid int) bool {
 // platformChildEnv is what a runner's environment needs beyond the portable
 // part childEnv builds. A POSIX runner needs nothing more than HOME and PATH.
 func platformChildEnv(string) []string { return nil }
+
+// A listener can exit before its workers finish responding to TERM.
+func runnerGroupAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
