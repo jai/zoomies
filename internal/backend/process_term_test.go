@@ -4,6 +4,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,5 +83,41 @@ func TestNativeFailedStartStopsAResistantChildWithinTheTimeout(t *testing.T) {
 	}
 	if runnerGroupAlive(cmd.Process.Pid) {
 		t.Fatal("failed startup left a live child")
+	}
+}
+
+func TestNativeOrphanRetainsItsSlotUntilTheGroupExits(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS process groups")
+	}
+	b, root := newStubProcessBackend(t)
+	b.admissionFile = filepath.Join(root, "policy")
+	policy := ProcessAdmission{Directory: filepath.Join(root, "slots"), Capacity: 1}
+	data, _ := json.Marshal(policy)
+	os.WriteFile(b.admissionFile, data, 0600)
+	installStubRunner(t, root, stubVersion, "#!/bin/sh\nsh -c 'trap \"\" TERM; echo child-ready; while [ ! -f release-child ]; do sleep 0.1; done' &\nwhile [ ! -f exit-parent ]; do sleep 0.1; done\n", stubConfigOK)
+	h, err := b.Create(context.Background(), processSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := readPID(string(h))
+	defer func() {
+		os.WriteFile(filepath.Join(string(h), "release-child"), nil, 0600)
+		waitFor(context.Background(), func() bool { return !runnerGroupAlive(pid) }, 5*time.Second, 20*time.Millisecond)
+		b.Remove(context.Background(), h)
+	}()
+	waitForLog(t, string(h), "child-ready", 5*time.Second)
+	os.WriteFile(filepath.Join(string(h), "exit-parent"), nil, 0600)
+	if !waitFor(context.Background(), func() bool { return !processAlive(pid) }, 5*time.Second, 20*time.Millisecond) {
+		t.Fatal("parent did not exit")
+	}
+	if err := b.Stop(context.Background(), h, time.Second); err == nil {
+		t.Fatal("unverified orphan group reported stopped")
+	}
+	if err := b.Remove(context.Background(), h); err == nil {
+		t.Fatal("removed a job with surviving workers")
+	}
+	if _, err := os.Stat(filepath.Join(policy.Directory, "1")); err != nil {
+		t.Fatal("released orphan reservation", err)
 	}
 }
