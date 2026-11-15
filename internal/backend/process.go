@@ -658,7 +658,7 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 		return nil
 	}
 	if !processAlive(pid) {
-		if b.termOnly && runnerGroupAlive(pid) {
+		if (b.termOnly || runtime.GOOS == "darwin") && runnerGroupAlive(pid) {
 			return fmt.Errorf("backend: runner leader exited but its process group remains; retaining directory and slot")
 		}
 		return nil
@@ -699,12 +699,23 @@ func (b *ProcessBackend) Stop(ctx context.Context, h Handle, timeout time.Durati
 		b.log.Warn("could not interrupt the runner; killing it", "dir", dir, "pid", pid, "error", err)
 		return b.kill(ctx, proc, dir)
 	}
-	if waitFor(ctx, func() bool { return !processAlive(pid) }, timeout, 200*time.Millisecond) {
+	if waitFor(ctx, func() bool { return !runnerAlive(pid) }, timeout, 20*time.Millisecond) {
 		return nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b.log.Warn("runner did not exit after graceful stop; killing it", "dir", dir, "pid", pid, "timeout", timeout)
 	return b.kill(ctx, proc, dir)
+}
+
+// Native workers can outlive their listener; a free slot means the group is gone.
+func runnerAlive(pid int) bool {
+	if runtime.GOOS == "darwin" {
+		return runnerGroupAlive(pid)
+	}
+	return processAlive(pid)
 }
 
 // killGrace is how long to wait for a killed runner to actually be gone.
@@ -718,10 +729,10 @@ func (b *ProcessBackend) kill(ctx context.Context, proc *os.Process, dir string)
 	if b.termOnly {
 		return fmt.Errorf("backend: forced termination is disabled for process runners")
 	}
-	if !processAlive(proc.Pid) {
+	if !runnerAlive(proc.Pid) {
 		return nil
 	}
-	{
+	if processAlive(proc.Pid) {
 		meta, err := readMeta(dir)
 		if err != nil {
 			return err
@@ -744,8 +755,8 @@ func (b *ProcessBackend) kill(ctx context.Context, proc *os.Process, dir string)
 	// to delete the directory it is running in -- which fails, or worse
 	// half-succeeds, while the process still has files open there. The SIGINT
 	// path above already waits; this one has to as well.
-	if !waitFor(ctx, func() bool { return !processAlive(proc.Pid) }, killGrace, 20*time.Millisecond) {
-		b.log.Warn("a killed runner is still there", "dir", dir, "pid", proc.Pid, "waited", killGrace)
+	if !waitFor(ctx, func() bool { return !runnerAlive(proc.Pid) }, killGrace, 20*time.Millisecond) {
+		return fmt.Errorf("backend: runner group %d remains after KILL; retaining its directory and slot", proc.Pid)
 	}
 	return nil
 }
@@ -765,7 +776,7 @@ func (b *ProcessBackend) wipe(ctx context.Context, dir string) error {
 		lease.release()
 		return nil
 	}
-	if pid := readPID(dir); pid > 0 && (processAlive(pid) || (b.termOnly && runnerGroupAlive(pid))) {
+	if pid := readPID(dir); pid > 0 && (runnerAlive(pid) || (b.termOnly && runnerGroupAlive(pid))) {
 		if err := b.Stop(ctx, Handle(dir), 10*time.Second); err != nil {
 			return fmt.Errorf("refusing to remove a runner whose process could not be stopped: %w", err)
 		}
