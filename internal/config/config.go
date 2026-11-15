@@ -811,7 +811,6 @@ type Agent struct {
 	// row, this is disk on the host: a busy host keeps one finished
 	// container per job for this long.
 	FinishedRetention    time.Duration `yaml:"finished_retention"`
-	ProcessTermOnly      bool          `yaml:"process_term_only"`
 	ProcessAdmissionFile string        `yaml:"process_admission_file"`
 	// PrewarmTimeout bounds background work separately from foreground starts.
 	PrewarmTimeout time.Duration `yaml:"prewarm_timeout"`

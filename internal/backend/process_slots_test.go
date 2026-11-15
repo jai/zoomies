@@ -1,21 +1,24 @@
+//go:build !windows
+
 package backend
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/eyupio/zoomies/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestNativeSlotsReserveBeforeRegistrationAndReleaseAfterRemoval(t *testing.T) {
 	b, root := newStubProcessBackend(t)
-	b.termOnly = true
 	installStubRunner(t, root, stubVersion, "#!/bin/sh\ntrap 'exit 0' TERM\necho ready\nwhile :; do sleep 1; done\n", stubConfigOK)
 	b.admissionFile = filepath.Join(root, "admission.json")
 	policy := ProcessAdmission{Directory: filepath.Join(root, "slots"), Capacity: 2, Env: map[string]string{"GATE_SLOT": "test-{slot}"}}
@@ -65,8 +68,10 @@ func TestNativeSlotsReserveBeforeRegistrationAndReleaseAfterRemoval(t *testing.T
 		}
 	}
 	entries, _ := os.ReadDir(policy.Directory)
-	if len(entries) != 0 {
-		t.Fatal("slot not released")
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Fatal("slot not released")
+		}
 	}
 }
 
@@ -184,5 +189,42 @@ func TestNativeRemovalRecoversSlotAfterPartialDirectoryDeletion(t *testing.T) {
 				t.Fatalf("stale slot remains: %v", err)
 			}
 		})
+	}
+}
+
+func TestConcurrentNativeAdmissionsRespectALoweredCapacity(t *testing.T) {
+	b, root := newStubProcessBackend(t)
+	b.admissionFile = filepath.Join(root, "policy")
+	policy := ProcessAdmission{Directory: filepath.Join(root, "slots"), Capacity: 2}
+	os.MkdirAll(filepath.Join(policy.Directory, "3"), 0700)
+	data, _ := json.Marshal(policy)
+	os.WriteFile(b.admissionFile, data, 0600)
+	for round := 0; round < 50; round++ {
+		start := make(chan struct{})
+		var admitted atomic.Int32
+		var leases sync.Map
+		var wg sync.WaitGroup
+		for worker := 0; worker < 8; worker++ {
+			wg.Add(1)
+			go func(worker int) {
+				defer wg.Done()
+				dir := filepath.Join(root, fmt.Sprintf("job-%d-%d", round, worker))
+				os.Mkdir(dir, 0700)
+				spec := processSpec()
+				<-start
+				if lease, err := b.reserveSlot(dir, &spec); err == nil {
+					admitted.Add(1)
+					leases.Store(worker, lease)
+				} else if Fault(err) != store.FaultBackendBusy {
+					t.Error(err)
+				}
+			}(worker)
+		}
+		close(start)
+		wg.Wait()
+		if admitted.Load() != 1 {
+			t.Fatalf("admitted %d beside one existing job at limit 2", admitted.Load())
+		}
+		leases.Range(func(_, value any) bool { value.(*processLease).release(); return true })
 	}
 }

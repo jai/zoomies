@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -98,4 +99,19 @@ func runnerGroupAlive(pid int) bool {
 	}
 	err := syscall.Kill(-pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// Counting reservations and creating one must be a single operation when a
+// reduced limit leaves jobs in higher-numbered slots. Cooperating schedulers
+// use the same lock; the kernel releases it if a scheduler exits.
+func lockProcessSlots(dir string) (func(), error) {
+	file, err := os.OpenFile(filepath.Join(dir, ".admission.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN); _ = file.Close() }, nil
 }

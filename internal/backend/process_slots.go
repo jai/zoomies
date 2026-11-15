@@ -11,7 +11,7 @@ import (
 )
 
 // ProcessAdmission is a host-local policy, read before registration. A separate
-// supervisor can lower capacity for disk pressure or interactive use without
+// supervisor can lower capacity for host policy without
 // killing a job already running. A missing policy fails closed.
 type ProcessAdmission struct {
 	ExpiresAt float64           `json:"expires_at"`
@@ -47,6 +47,11 @@ func (b *ProcessBackend) reserveSlot(dir string, spec *Spec) (*processLease, err
 	if err := os.MkdirAll(policy.Directory, 0700); err != nil {
 		return nil, err
 	}
+	unlock, err := lockProcessSlots(policy.Directory)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	entries, err := os.ReadDir(policy.Directory)
 	if err != nil {
 		return nil, err
