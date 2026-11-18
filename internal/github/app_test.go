@@ -834,9 +834,9 @@ func TestThePollerReadsEveryPageOfALargeRunsJobs(t *testing.T) {
 	if want := 3 * pollPerPage; len(jobs) != want {
 		t.Fatalf("found %d jobs, want all %d across three pages", len(jobs), want)
 	}
-	// Two run listings (queued, in progress) and one request per job page.
-	if n := requests.Load(); n != 5 {
-		t.Fatalf("the sweep made %d requests, want 5", n)
+	// Three run listings (recent, queued, in progress) and one per job page.
+	if n := requests.Load(); n != 6 {
+		t.Fatalf("the sweep made %d requests, want 6", n)
 	}
 }
 
@@ -857,10 +857,10 @@ func TestAnUnchangedFallbackPollRevalidatesEveryRead(t *testing.T) {
 			t.Fatalf("found %d jobs, want the same %d on every sweep", len(jobs), pollPerPage)
 		}
 	}
-	if got, want := requests.Load(), int32(6); got != want {
+	if got, want := requests.Load(), int32(8); got != want {
 		t.Fatalf("two sweeps made %d requests, want %d", got, want)
 	}
-	if got, want := conditional.Load(), int32(3); got != want {
+	if got, want := conditional.Load(), int32(4); got != want {
 		t.Fatalf("second sweep made %d conditional requests, want all %d", got, want)
 	}
 }

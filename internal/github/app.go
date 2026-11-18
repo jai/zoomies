@@ -34,10 +34,10 @@ const (
 	// jobs, and a large matrix costs one more for every hundred of them.
 	maxPollRuns = 50
 	// maxPollRequests caps the API calls one sweep may make in total: the
-	// repository listing, the two run listings per repository and the job
+	// repository listing, the three run listings per repository and the job
 	// listing per run (a page each, for a run with more than a hundred jobs).
 	// maxPollRuns bounds only the last of those, and a
-	// hundred-repository organisation costs two hundred run listings before
+	// hundred-repository organisation costs three hundred run listings before
 	// a single job is looked at -- every thirty seconds, in exactly the
 	// failure the poller exists for, which spent the installation's hourly
 	// quota in about ten minutes and then starved JIT minting. Sixty a sweep
@@ -630,6 +630,7 @@ func (c *appClient) ListQueuedJobs(ctx context.Context) ([]QueuedJob, error) {
 	}
 	budget := maxPollRuns
 	seen := make(map[int64]bool)
+	seenRuns := make(map[int64]bool)
 	var out []QueuedJob
 
 	for _, full := range repos {
@@ -640,9 +641,10 @@ func (c *appClient) ListQueuedJobs(ctx context.Context) ([]QueuedJob, error) {
 		if name == "" {
 			continue
 		}
-		// A run that is in_progress can still hold jobs nobody has picked up,
-		// so both statuses matter.
-		for _, status := range []string{"queued", "in_progress"} {
+		// GitHub's status index can omit a recent queued run even when its
+		// ordinary listing already contains it. Read that page first; keep
+		// the filtered listings for older work beyond the recent page.
+		for _, status := range []string{"", "queued", "in_progress"} {
 			if budget <= 0 || requests <= 0 {
 				break
 			}
@@ -668,6 +670,13 @@ func (c *appClient) ListQueuedJobs(ctx context.Context) ([]QueuedJob, error) {
 				if budget <= 0 || requests <= 0 {
 					break
 				}
+				if status == "" && run.GetStatus() != "queued" && run.GetStatus() != "in_progress" {
+					continue
+				}
+				if seenRuns[run.GetID()] {
+					continue
+				}
+				seenRuns[run.GetID()] = true
 				budget--
 				requests--
 				jobs, err := c.queuedJobsForRun(ctx, owner, name, run, &requests)
