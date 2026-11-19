@@ -34,7 +34,8 @@ Two things are deliberately **not** here, and both were close calls, see
 | `github.com/charmbracelet/x/ansi` | Clip and measure terminal text by display cells, preserving colour escapes and wide characters when a window is resized. Already required by Bubble Tea; using it directly adds no module to the dependency graph. |
 | `github.com/charmbracelet/lipgloss` | Styling and responsive card layouts for the CLI home, plus the installer and table output. |
 | `golang.org/x/term` | Terminal detection, so the CLI and installer degrade to plain output when piped. |
-| `golang.org/x/sys` | The Windows half of the agent: the service control dispatcher a process started by the service manager must answer, the job object that lets killing a runner kill what it started, and the process and disk queries POSIX answers with a signal and a `statfs`. It was already in the tree as a transitive dependency; making it direct added no module. |
+| `golang.org/x/sys` | The Windows half of the agent: the service control dispatcher a process started by the service manager must answer, the job object that lets killing a runner kill what it started, the process and disk queries POSIX answers with a signal and a `statfs`, and on macOS the `sysctl` reads behind a native agent's memory and load average. It was already in the tree as a transitive dependency; making it direct added no module. |
+| `github.com/ebitengine/purego` | A native macOS agent's CPU figure. macOS keeps its CPU ticks behind the Mach call `host_statistics`, which no `sysctl` exposes, and the release builds with `CGO_ENABLED=0`; purego calls it from Go without cgo, as gopsutil does on macOS. Used only in `internal/machine/usage_darwin.go`. |
 
 Standard library for everything else: `net/http`, `log/slog`, `database/sql`,
 `crypto/*`, `embed`, `os/exec`, `context`, `testing`.
