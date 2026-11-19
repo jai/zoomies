@@ -289,3 +289,22 @@ func TestTheAgentReportsTheHostItCanActuallyFill(t *testing.T) {
 		t.Fatal("no heartbeat was sent")
 	}
 }
+
+// A native Mac agent's runners are its own processes. A Linux VM's daemon that
+// also answers on the Mac (OrbStack, Docker Desktop) is a fraction of the Mac and
+// runs none of them, so it must not size the host.
+func TestANativeAgentIsSizedByItsOwnMachineEvenWhenADaemonAnswers(t *testing.T) {
+	self := machine.Facts{CPUs: 18, MemoryMB: 131_072}
+	infos := []backend.Info{
+		{Kind: store.BackendDocker, Available: true, CPUs: 18, MemoryMB: 64_253},
+		{Kind: store.BackendProcess, Available: true},
+	}
+	native := &Agent{opts: Options{DefaultBackend: store.BackendProcess}}
+	if cpus, memoryMB := native.hostSize(infos, self); cpus != 18 || memoryMB != 131_072 {
+		t.Fatalf("native agent = %d cpus, %d MB; want the Mac's own 18 and 131072", cpus, memoryMB)
+	}
+	container := &Agent{opts: Options{DefaultBackend: store.BackendDocker}}
+	if _, memoryMB := container.hostSize(infos, self); memoryMB != 64_253 {
+		t.Fatalf("container agent = %d MB; want the daemon's 64253", memoryMB)
+	}
+}
