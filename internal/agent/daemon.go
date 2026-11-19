@@ -673,7 +673,7 @@ func (a *Agent) Join(ctx context.Context, joinToken string) error {
 	a.mu.Unlock()
 
 	m := a.machine()
-	cpus, memoryMB := hostSize(infos, m)
+	cpus, memoryMB := a.hostSize(infos, m)
 	total, free := a.workDirSpace()
 	req := JoinRequest{
 		ProtocolVersion: ProtocolVersion,
@@ -1064,7 +1064,7 @@ func (a *Agent) heartbeat(ctx context.Context) error {
 	infos := a.diskBackends(a.refreshBackends(ctx))
 	runners := a.Runners()
 	m := a.machine()
-	cpus, memoryMB := hostSize(infos, m)
+	cpus, memoryMB := a.hostSize(infos, m)
 	total, free := a.workDirSpace()
 	update, delivery := a.updateReport()
 	features := a.features()
@@ -2397,6 +2397,18 @@ func (a *Agent) adoptExisting(ctx context.Context) {
 	if adopted > 0 {
 		a.log.Info("adopted runners already on this host", "runners", adopted)
 	}
+}
+
+// hostSize is this agent's machine for runners. A native agent, whose runners
+// are processes it starts itself, is sized by its own machine even when a
+// container daemon also answers on the host: on a Mac that daemon is a Linux VM
+// (OrbStack, Docker Desktop) a fraction of the Mac's size, and the runners do
+// not run in it. Every other agent takes the daemon's view, as hostSize says.
+func (a *Agent) hostSize(infos []backend.Info, self machine.Facts) (cpus int, memoryMB int64) {
+	if a.opts.DefaultBackend == store.BackendProcess && self.CPUs > 0 && self.MemoryMB > 0 {
+		return self.CPUs, self.MemoryMB
+	}
+	return hostSize(infos, self)
 }
 
 // hostSize is how much machine this host has for runners, preferring what a

@@ -552,7 +552,7 @@ func (a *Agent) hostMemory() (machine.Memory, bool) {
 	a.mu.Lock()
 	infos := a.backendInfo
 	a.mu.Unlock()
-	_, memoryMB := hostSize(infos, a.machine())
+	_, memoryMB := a.hostSize(infos, a.machine())
 	if a.opts.ReadMemory != nil {
 		return a.opts.ReadMemory(memoryMB)
 	}
